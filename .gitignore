@@ -53,3 +53,7 @@ Module.symvers
 Mkfile.old
 dkms.conf
 build/
+*.iml
+*.xml
+firmware/heartypatch-stream-tcp/sdkconfig
+*.old

@@ -90,8 +90,8 @@ void kalam_wifi_init(void)
 
 #ifdef CONFIG_MDNS_ENABLE
       esp_err_t err = mdns_init(TCPIP_ADAPTER_IF_STA, &mdns);
-      ESP_ERROR_CHECK( mdns_set_hostname(mdns, KALAM32_MDNS_NAME) );
-      ESP_ERROR_CHECK( mdns_set_instance(mdns, KALAM32_MDNS_NAME) );
+      ESP_ERROR_CHECK( mdns_set_hostname(mdns, CONFIG_MDNS_NAME) );
+      ESP_ERROR_CHECK( mdns_set_instance(mdns, CONFIG_MDNS_NAME) );
 #endif
 
 }

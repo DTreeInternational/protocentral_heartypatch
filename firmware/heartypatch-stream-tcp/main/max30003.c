@@ -19,7 +19,7 @@
 #include "packet_format.h"
 
 // Selects between interrupts and poll mode
-#define USE_INTERRUPTS 1
+// #define USE_INTERRUPTS 1
 int semaphore_timeout = 10 / portTICK_PERIOD_MS;
 
 // STATS_INTERVAL Controls frequency of stats output in units of FIFO reads
@@ -50,7 +50,7 @@ struct timeval timestamp;             // packet timestamp (seconds and microseco
 
 
 
-#ifdef USE_INTERRUPTS
+#ifdef CONFIG_MAX30003_INTERRUPT_ENABLE
 
 /*
  * Interrupt code
@@ -89,6 +89,9 @@ void max30003_drdy_interrupt_enable() // DRDY isr
 
 void max30003_intr_prime()
 {
+    // After FIFO reset force immediate return from interrupt.
+    // Mostly likely obsolete based on recent code changes.
+    // TODO:  Consider removing based on further error recovery testing
     xSemaphoreGive(max30003intSem);
 }
 

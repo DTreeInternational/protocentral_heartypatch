@@ -27,7 +27,7 @@
 #define PIN_SPI_MISO 19
 #define PIN_SPI_SCK  18
 
-#define KALAM32_MDNS_NAME       "heartypatch"
+//#define KALAM32_MDNS_NAME       "heartypatch"
 #define TAG "heartypatch:"
 #define BUF_SIZE  1000
 
