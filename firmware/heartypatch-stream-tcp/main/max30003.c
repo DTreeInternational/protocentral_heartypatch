@@ -18,10 +18,6 @@
 #include "esp_log.h"
 #include "packet_format.h"
 
-// Selects between interrupts and poll mode
-// #define USE_INTERRUPTS 1
-int semaphore_timeout = 10 / portTICK_PERIOD_MS;
-
 // STATS_INTERVAL Controls frequency of stats output in units of FIFO reads
 #define STATS_INTERVAL 15000
 
@@ -40,106 +36,11 @@ spi_device_handle_t spi;
 int tally_etag[8];      // histogram of etag values
 int tally_reset = 0;    // ECG FIFO resets since start of current connection
 int stats_read_count = 0;     // read count for reporting purposes, reset after status output
-int tally_interrupts = 0;
-int tally_interrupt_wakeup = 0;
-int tally_interrupt_timeout = 0;
 int read_status = 0;
 
 unsigned int packet_sequence_id = 0;  // packet sequence ID.  Set to 0 at start and after each FIFO reset
 struct timeval timestamp;             // packet timestamp (seconds and microseconds)
 
-
-
-#ifdef CONFIG_MAX30003_INTERRUPT_ENABLE
-
-/*
- * Interrupt code
- */
-
-static xQueueHandle max30003intSem;
-
-void IRAM_ATTR gpio_isr_handler(void* arg)
-{
-    BaseType_t mustYield=false;
-    xSemaphoreGiveFromISR(max30003intSem, &mustYield);
-    tally_interrupts += 1;
-}
-
-
-void max30003_interrupt_disable(void)
-{
-    gpio_isr_handler_remove(MAX30003_INT_PIN);   // disable interrupts
-}
-
-
-void max30003_drdy_interrupt_enable() // DRDY isr
-{
-    gpio_config_t io_conf;
-    io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
-    io_conf.pin_bit_mask = 1 << MAX30003_INT_PIN;
-    io_conf.mode = GPIO_MODE_INPUT;
-    gpio_config(&io_conf);
-
-    gpio_set_intr_type(MAX30003_INT_PIN, GPIO_PIN_INTR_POSEDGE);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_remove(MAX30003_INT_PIN);
-    gpio_isr_handler_add(MAX30003_INT_PIN, gpio_isr_handler, (void*) MAX30003_INT_PIN);
-}
-
-void max30003_intr_prime()
-{
-    // After FIFO reset force immediate return from interrupt.
-    // Mostly likely obsolete based on recent code changes.
-    // TODO:  Consider removing based on further error recovery testing
-    xSemaphoreGive(max30003intSem);
-}
-
-
-void max30003_initialize_interrupt_handler() // DRDY isr
-{
-    ESP_LOGI(TAG, "Calling max30003_initialize_interrupt_handler\n");
-    if (max30003intSem == NULL) {
-        max30003intSem = xSemaphoreCreateBinary();
-    };
-    max30003_drdy_interrupt_enable();
-    max30003_intr_prime();
-    ESP_LOGI(TAG, "Interrupts initialized\n");
-}
-
-void max30003_poll_wait(void)
-{
-    // wait for interrupt
-    if (xSemaphoreTake(max30003intSem, semaphore_timeout) == pdTRUE) {
-        tally_interrupt_wakeup++;
-    } else {
-        tally_interrupt_timeout++;
-    }
-}
-
-#else
-
-// use static delay if interrupts not configured
-void max30003_poll_wait(void)
-{
-    vTaskDelay(2/portTICK_RATE_MS);
-    //vTaskDelay(1);
-    //taskYIELD();
-}
-
-// dummy version
-void max30003_intr_prime()
-{
-    ;
-}
-
-// dummy version
-void max30003_initialize_interrupt_handler()
-{
-    ;
-}
-
-#endif
 
 //This function is called (in irq context!) just before a transmission starts.
 void max30003_spi_pre_transfer_callback(spi_transaction_t *t)
@@ -269,7 +170,6 @@ void max30003_synch(void)
 void max30003_fifo_reset(void)
 {
     MAX30003_Reg_Write(FIFO_RST,0x000000);
-    max30003_intr_prime();
     tally_reset++;
 }
 
@@ -283,9 +183,6 @@ void MAX30003_init_sequence() {
     tally_reset = 0;
     stats_read_count = 0;
     packet_sequence_id = 0;
-    tally_interrupts = 0;
-    tally_interrupt_wakeup = 0;
-    tally_interrupt_timeout = 0;
     read_status = 0;
 }
 
@@ -294,8 +191,7 @@ void print_counters() {
     ESP_LOGI(TAG, "\n");
     ESP_LOGI(TAG, "Tallies FIFO Reset: %d  Read Status: %d  ETAG[0]: %d  ETAG[2]: %d",
         tally_reset, read_status, tally_etag[0], tally_etag[2]);
-    ESP_LOGI(TAG, "Tally for Interrupts: %d  Wakeup: %d  Timeout: %d",
-        tally_interrupts, tally_interrupt_wakeup, tally_interrupt_timeout);
+
     /*
     ESP_LOGI(TAG, "Tallies for Individual ETag");
     for (int i=0; i < 8; i++)
@@ -335,13 +231,6 @@ void max30003_initchip(int pin_miso, int pin_mosi, int pin_sck, int pin_cs )
     max30003_start_timer();
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    max30003_initialize_interrupt_handler();
-}
-
-void max30003_configure(void)
-{
-    int sps_scale;
-
     max30003_sw_reset();
     //vTaskDelay(100 / portTICK_PERIOD_MS);
 
@@ -358,17 +247,14 @@ void max30003_configure(void)
 #ifdef CONFIG_SPS_128
     ecg_config = ecg_config | 0x800000;   //  d[23:22] -- RATE[0:1]: 10 for 128sps
         ESP_LOGI(TAG, "max30003_initchip setting SPS to 128");
-    sps_scale = 4;
 #endif
 #ifdef CONFIG_SPS_256
     ecg_config = ecg_config | 0x400000;   //  d[23:22] -- RATE[0:1]: 01 for 256 sps
     ESP_LOGI(TAG, "max30003_initchip setting SPS to 256");
-    sps_scale = 2;
 #endif
 #ifdef CONFIG_SPS_512
     //ecg_config = ecg_config | 0x000000;   //  d[23:22] -- RATE[0:1]: 00 for 512sps
     ESP_LOGI(TAG, "max30003_initchip setting SPS to 512");
-    sps_scale = 1;
 #endif
 
 #ifdef CONFIG_DHPF_ENABLE
@@ -380,16 +266,12 @@ void max30003_configure(void)
 
 // below lines for debug only -- TODO: Delete me -- for debug purposes only -- 128sps
 //ecg_config = ecg_config | 0x800000;   //  d[23:22] -- RATE[0:1]: 10 for 128sps
-///sps_scale = 4;
 
 // below lines for debug only -- TODO: Delete me -- for debug purposes only -- 512sps
 //ecg_config = 0x001000;                //  d[23:22] -- RATE[0:1]: 00 for 128sps 512sps
-///sps_scale = 1;
 
     MAX30003_Reg_Write(CNFG_ECG, ecg_config);
     //vTaskDelay(100 / portTICK_PERIOD_MS);
-
-    semaphore_timeout = semaphore_timeout * sps_scale;
 
     MAX30003_Reg_Write(CNFG_RTOR1,0x3fc600);
     //vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -406,7 +288,6 @@ void max30003_configure(void)
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
     MAX30003_init_sequence();
-    max30003_intr_prime();
 }
 
 

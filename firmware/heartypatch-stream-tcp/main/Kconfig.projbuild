@@ -59,10 +59,4 @@ config MAX30003_STATS_ENABLE
 	help
 		Enable/Disable Max30003 stats reporting to console
 
-config MAX30003_INTERRUPT_ENABLE
-	bool "Enable Interrupts"
-	default n
-	help
-		Enable/Disable Max30003 interrupts in place of polling
-
 endmenu

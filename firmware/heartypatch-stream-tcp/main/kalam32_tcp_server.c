@@ -36,8 +36,6 @@
 int connectedflag = 0;
 int total_data = 0;
 
-static int kill_send_data = false;
-
 /*AP info and tcp_server info*/
 #define DEFAULT_SSID CONFIG_TCP_PERF_WIFI_SSID
 #define DEFAULT_PWD CONFIG_TCP_PERF_WIFI_PASSWORD
@@ -62,26 +60,14 @@ static void send_data(void *pvParameters)
     db=databuff;
     vTaskDelay(100/portTICK_RATE_MS);
     ESP_LOGI(TAG, "start sending...");
-    kill_send_data = false;
-
-    max30003_configure();
 
 	while(1)
     {
-        while(1)
-        {
-            if (kill_send_data) {
-                max30003_sw_reset();     // Quiesce MAX30003
-                vTaskDelete(NULL);
-            }
-
-            db = max30003_read_send_data();
-            if (db == NULL)
-                break;
-            send(connect_socket, db, PACKET_SIZE, 0);
-        }
-        //vTaskDelay(2/portTICK_RATE_MS);
-        max30003_poll_wait();
+        db = max30003_read_send_data();
+  	     //send function
+      	if (db != NULL)
+      	    send(connect_socket, db, PACKET_SIZE, 0);
+        vTaskDelay(2/portTICK_RATE_MS);
     }
 }
 
@@ -213,7 +199,8 @@ void tcp_conn(void *pvParameters)
         }
         /*create a task to tx/rx data*/
         xTaskCreate(&send_data, "send_data", 4096, NULL, 4, &tx_rx_task);
-        while (1)
+        int flag = true;
+        while (flag)
         {
             vTaskDelay(1500 / portTICK_RATE_MS);//every 3s
             int err_ret = check_socket_error_code();
@@ -221,11 +208,13 @@ void tcp_conn(void *pvParameters)
             {
               ESP_LOGI(TAG, "disconnected... stop.");
               close_socket();
-              kill_send_data = true;
-              break;
+              flag = false;
             }
         }
+        vTaskDelete(&tx_rx_task);
+        max30003_sw_reset();
         ESP_LOGI(TAG, "restart");
+        flag = true;
     }
 
     close_socket();
