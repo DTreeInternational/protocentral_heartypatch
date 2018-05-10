@@ -67,7 +67,8 @@ static void send_data(void *pvParameters)
   	     //send function
       	if (db != NULL)
       	    send(connect_socket, db, PACKET_SIZE, 0);
-        vTaskDelay(2/portTICK_RATE_MS);
+        //vTaskDelay(2/portTICK_RATE_MS);
+        vTaskDelay(30/portTICK_RATE_MS);
     }
 }
 
